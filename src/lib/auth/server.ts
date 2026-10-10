@@ -58,7 +58,21 @@ function findUser(payload: unknown): AuthUser | undefined {
   for (const key of ["user", "profile", "account"]) {
     if (value[key] && typeof value[key] === "object") return value[key] as AuthUser;
   }
+  for (const child of Object.values(value)) {
+    const nested = findUser(child);
+    if (nested) return nested;
+  }
   return undefined;
+}
+
+function roleFromToken(token: string) {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")) as Record<string, unknown>;
+    const role = payload.role ?? payload.roles;
+    return Array.isArray(role) ? String(role[0] ?? "").toUpperCase() : typeof role === "string" ? role.toUpperCase() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function callAuthApi(path: string, body: Record<string, unknown>) {
@@ -84,12 +98,15 @@ export async function createSession(result: AuthResult) {
   };
   store.set("access_token", result.accessToken, { ...options, maxAge: 60 * 15 });
   if (result.refreshToken) store.set("refresh_token", result.refreshToken, { ...options, maxAge: 60 * 60 * 24 * 30 });
+  const role = result.user?.role?.toUpperCase() ?? roleFromToken(result.accessToken);
+  if (role) store.set("session_role", role, { ...options, maxAge: 60 * 15 });
 }
 
 export async function clearSession() {
   const store = await cookies();
   store.delete("access_token");
   store.delete("refresh_token");
+  store.delete("session_role");
 }
 
 export async function getAccessToken() {
@@ -111,4 +128,8 @@ export async function refreshSession() {
 
 export async function requireSession() {
   if (!(await getAccessToken())) redirect("/login");
+}
+
+export async function getSessionRole() {
+  return (await cookies()).get("session_role")?.value?.toUpperCase();
 }
